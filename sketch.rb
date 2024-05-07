@@ -1,11 +1,26 @@
-require 'json'
-require 'schema'
-require 'openssl'
+#!/usr/bin/env -S ruby --disable-gems
 
-require_relative './init'
+require "tempfile"
+ENV["GEM_HOME"] = Dir.mktmpdir("rubygems-#{File.basename($PROGRAM_NAME, ".rb")}")
+
+require "rubygems" or abort "Invoke ruby with --disable-gems"
+require "bundler/inline"
+
+gemfile do
+  source "https://rubygems.org"
+
+  gem "evt-reflect", require: "reflect"
+
+  group :development do
+    gem "evt-schema", require: "schema"
+
+    require 'json'
+  end
+end
+
 
 module Protocol
-  Error = Class.new(StandardError)
+  Error = Class.new(RuntimeError)
 
   def self.get(subject, namespace, *path, method_name)
     method = get_method(subject, namespace, *path, method_name)
@@ -54,23 +69,28 @@ module Protocol
   end
 end
 
+
+## Construct a substitute by discovering the Substitute.build protocol
 class SomeClass
   module Substitute
     def self.build
-      { k: '123' }
+      SomeSubstitute.new
+    end
+
+    class SomeSubstitute
     end
   end
 end
 
 build = Protocol.get(SomeClass, :Substitute, :build)
-p build.()
 
-class SomeStruct
-  include Schema::DataStructure
+substitute = build.()
+p substitute
+# => #<SomeClass::Substitute::SomeSubstitute:0x00000001066b9f48>
 
-  attribute :some_attr, String
-  attribute :some_other_attr, Integer
 
+## Transform data structure into JSON via Transform protocol.
+class SomeStruct < Struct.new(:some_attr, :some_other_attr)
   module Transform
     def self.json
       JSON
@@ -88,20 +108,24 @@ class SomeStruct
   end
 end
 
-subject = SomeStruct.build(some_attr: "some value", some_other_attr: 11)
+subject = SomeStruct.new(some_attr: 'some value', some_other_attr: 'some other value')
 
 raw_data = Protocol.get(subject, :Transform, :raw_data)
 
-# The subject will be supplied as a positional argument to the raw_data method
+## Subject is supplied to Transform.raw_data
 raw_data = raw_data.()
 p raw_data
+# => {:some_attr=>"some value", :some_other_attr=>"some other value"}
 
-write = Protocol.get(subject, :Transform, :json, :write)
+write_json = Protocol.get(subject, :Transform, :json, :write)
 
-# Override the subject argument:
-res = write.(raw_data)
-p res
+## raw_data, rather than subject, is supplied to Transform::JSON.write
+json = write_json.(raw_data)
+p json
+# => "{\"some_attr\":\"some value\",\"some_other_attr\":\"some other value\"}"
 
+
+## Protocol error
 class SomeOtherClass
   module SomeConstant
     def self.some_method
@@ -111,8 +135,6 @@ end
 
 subject = SomeOtherClass.new
 
-begin
-  Protocol.get(subject, :SomeConstant, :some_other_method)
-rescue Protocol::Error => e
-  p e
-end
+## Raises a Protocol::Error, since some_other_method isn't defined
+Protocol.get(subject, :SomeConstant, :some_other_method)
+# => SomeOtherClass::SomeConstant does not define method some_other_method (Protocol::Error)
