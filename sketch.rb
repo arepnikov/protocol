@@ -11,11 +11,8 @@ gemfile do
 
   gem "evt-reflect", require: "reflect"
 
-  group :development do
-    gem "evt-schema", require: "schema"
-
-    require 'json'
-  end
+  gem "evt-schema", require: "schema"
+  require 'json'
 end
 
 
@@ -33,7 +30,8 @@ module Protocol
   end
 
   def self.get_method(subject, namespace, *path, method_name)
-    # subject_namespace = Reflect.(subject, namespace)
+    ## Reflect should just resolve a namespace under a subject's class
+    #subject_namespace = Reflect.(subject, namespace)
     reflection = Reflect.(subject, namespace)
     subject_namespace = reflection.target
 
@@ -46,8 +44,6 @@ module Protocol
       raise Error, "#{target_name} does not define method #{method_name}"
     end
   end
-
-  private
 
   def self.traverse_path(subject_namespace, path)
     namespace = subject_namespace
@@ -89,8 +85,13 @@ p substitute
 # => #<SomeClass::Substitute::SomeSubstitute:0x00000001066b9f48>
 
 
-## Transform data structure into JSON via Transform protocol.
-class SomeStruct < Struct.new(:some_attr, :some_other_attr)
+## Transform data structure into JSON via Transform protocol
+class SomeStruct
+  include Schema::DataStructure
+
+  attribute :some_attr
+  attribute :some_other_attr
+
   module Transform
     def self.json
       JSON
@@ -108,7 +109,7 @@ class SomeStruct < Struct.new(:some_attr, :some_other_attr)
   end
 end
 
-subject = SomeStruct.new(some_attr: 'some value', some_other_attr: 'some other value')
+subject = SomeStruct.build(some_attr: 'some value', some_other_attr: 'some other value')
 
 raw_data = Protocol.get(subject, :Transform, :raw_data)
 
@@ -135,6 +136,18 @@ end
 
 subject = SomeOtherClass.new
 
-## Raises a Protocol::Error, since some_other_method isn't defined
-Protocol.get(subject, :SomeConstant, :some_other_method)
-# => SomeOtherClass::SomeConstant does not define method some_other_method (Protocol::Error)
+## Raises an error since some_other_method isn't defined
+begin
+  Protocol.get(subject, :SomeConstant, :some_other_method)
+rescue Protocol::Error => protocol_error
+  p protocol_error
+  # => "#<Protocol::Error: SomeOtherClass::SomeConstant does not define method some_other_method>"
+end
+
+## Raises an error since SomeOtherConstant isn't defined
+begin
+  Protocol.get(subject, :SomeOtherConstant, :some_method)
+rescue Reflect::Error => reflect_error
+  p reflect_error
+  # => "#<Reflect::Error: Namespace SomeOtherConstant is not defined in SomeOtherClass>"
+end
